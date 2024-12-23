@@ -13,6 +13,7 @@ from threading import Thread
 from scripts.login_screen import CONFIG
 from scripts.utils import HiddenPrints
 
+# Load configuration
 GAME_PATH = CONFIG["GAME_PATH"]
 WEBUI_PATH = CONFIG["WEBUI_PATH"]
 USE_TTS = CONFIG["USE_TTS"]
@@ -24,9 +25,85 @@ USE_SPEECH_RECOGNITION = CONFIG["USE_SPEECH_RECOGNITION"]
 VOICE_SAMPLE_COQUI = CONFIG["VOICE_SAMPLE_COQUI"]
 VOICE_SAMPLE_TORTOISE = CONFIG["VOICE_SAMPLE_TORTOISE"]
 
+print(f"Initial TTS settings:")
+print(f"USE_TTS: {USE_TTS}")
+print(f"TTS_MODEL: {TTS_MODEL}")
+if TTS_MODEL == "VITS":
+    print(f"VITS_SPEAKER: {CONFIG.get('VITS_SPEAKER')}")
+    print(f"VITS_MODEL_PATH: {CONFIG.get('VITS_MODEL_PATH')}")
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# Actions model
+# Initialize TTS first
+tts_model = None
+sampling_rate = None
+voice_samples = None
+conditioning_latents = None
+
+print("Checking TTS initialization...")
+if USE_TTS:
+    print("Initializing TTS...")
+    from scripts.play_tts import play_TTS, initialize_xtts, initialize_vits
+    if TTS_MODEL == "Your TTS":
+        print("Initializing Your TTS...")
+        from scripts.tts_api import my_TTS
+        tts_model = my_TTS(model_name="tts_models/multilingual/multi-dataset/your_tts")
+        sampling_rate = 16000
+    elif TTS_MODEL == "XTTS":
+        print("Initializing XTTS...")
+        tts_model = initialize_xtts()
+        sampling_rate = 24000
+    # In main.py, update the VITS initialization section
+    elif TTS_MODEL == "VITS":
+        print("Attempting to initialize VITS...")
+        try:
+            vits_info = initialize_vits(CONFIG["VITS_MODEL_PATH"])
+            tts_model = vits_info  # Store the whole VITSInfo object
+            print("VITS model initialized successfully")
+            
+            # Print available speakers
+            if hasattr(vits_info.model.synthesizer.tts_model, 'speaker_manager'):
+                speaker_names = vits_info.model.synthesizer.tts_model.speaker_manager.speaker_names
+                print(f"Available speakers: {speaker_names}")
+                
+            # Verify speaker ID exists
+            vits_speaker = CONFIG.get("VITS_SPEAKER", 0)
+            if isinstance(vits_speaker, str):
+                try:
+                    int(vits_speaker)  # Just to verify if it's a valid number
+                except ValueError:
+                    if vits_speaker not in speaker_names:
+                        print(f"Warning: Speaker name {vits_speaker} not found. Using first available speaker.")
+                        CONFIG["VITS_SPEAKER"] = speaker_names[0]
+            
+            sampling_rate = vits_info.sampling_rate  # Use the sampling rate from config
+            voice_samples = None
+            conditioning_latents = None
+            print(f"VITS configured with speaker ID: {CONFIG['VITS_SPEAKER']} and sampling rate: {sampling_rate}")
+        except Exception as e:
+            print(f"Error initializing VITS model: {str(e)}")
+            print("Please ensure you have both model.pth and config.json in your VITS_model directory")
+            USE_TTS = False
+    elif TTS_MODEL == "Tortoise TTS":
+        print("Initializing Tortoise...")
+        if device.type == "cuda":
+            from tortoise.api_fast import TextToSpeech, MODELS_DIR
+        else:
+            from tortoise.api import TextToSpeech, MODELS_DIR
+        from tortoise.utils.audio import load_voices
+        from voicefixer import VoiceFixer
+        tts_model = TextToSpeech(
+                models_dir=MODELS_DIR,
+                kv_cache=True,
+            )
+        voice_samples, conditioning_latents = load_voices([VOICE_SAMPLE_TORTOISE], ["tortoise_audios"])
+        vfixer = VoiceFixer()
+        sampling_rate = 24000
+    print(f"TTS initialization completed. USE_TTS={USE_TTS}")
+else:
+    print("No TTS model selected")
+
+# Actions model initialization
 if USE_ACTIONS:
     try:
         from transformers import pipeline
@@ -48,41 +125,7 @@ if USE_ACTIONS:
         "zero-shot-classification",
         model="sileod/deberta-v3-base-tasksource-nli")
 
-# TTS model
-with HiddenPrints():
-    if USE_TTS:
-        from scripts.play_tts import play_TTS, initialize_xtts
-        if TTS_MODEL == "Your TTS":
-            from scripts.tts_api import my_TTS
-            tts_model = my_TTS(model_name="tts_models/multilingual/multi-dataset/your_tts")
-            sampling_rate = 16000
-            voice_samples = None
-            conditioning_latents = None
-        elif TTS_MODEL == "XTTS":
-            tts_model = initialize_xtts()
-            sampling_rate = 24000
-            voice_samples = None
-            conditioning_latents = None
-        elif TTS_MODEL == "Tortoise TTS":
-            if device.type == "cuda":
-                from tortoise.api_fast import TextToSpeech, MODELS_DIR
-            else:
-                from tortoise.api import TextToSpeech, MODELS_DIR
-            from tortoise.utils.audio import load_voices
-            from voicefixer import VoiceFixer
-            tts_model = TextToSpeech(
-                    models_dir=MODELS_DIR,
-                    kv_cache=True,
-                )
-            voice_samples, conditioning_latents = load_voices([VOICE_SAMPLE_TORTOISE], ["tortoise_audios"])
-            vfixer = VoiceFixer()
-            sampling_rate = 24000
-        
-    else:
-        print("No TTS model selected")
-
-
-# Speech recognition model
+# Initialize speech recognition
 if USE_SPEECH_RECOGNITION:
     try:
         import torch
@@ -118,9 +161,8 @@ if USE_SPEECH_RECOGNITION:
         return r, audio_model
 
     r, audio_model = init_stt()
-
-
-# Chatbot connection
+    
+# Initialize WebUI connection
 WEBUI_PATH = WEBUI_PATH.replace("\\", "/")
 if not LAUNCH_YOURSELF_WEBUI:
     subprocess.Popen(WEBUI_PATH)
@@ -308,7 +350,9 @@ def listenToClient(client):
                                 conditioning_latents,
                                 TTS_MODEL,
                                 VOICE_SAMPLE_COQUI,
-                                uni_chr_re)
+                                uni_chr_re,
+                                CONFIG.get("VITS_SPEAKER") if TTS_MODEL == "VITS" else None
+                            )
                         print("Sent: " + msg)
                         send_answer(received_msg, msg)
                     break
