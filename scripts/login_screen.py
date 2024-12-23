@@ -15,7 +15,7 @@ doki_white = "#F9F3F9"
 doki_dark_pink = '#F9B7DB'
 doki_light_pink = '#F4DCEA'
 doki_purple = '#AB6999'
-menu_background_pink = '#EC9DC8' # unofficial ddlc color but it's used for better contrast with doki white
+menu_background_pink = '#EC9DC8'
 
 bg_image = tk.PhotoImage(file=r"images\login\login_background.png")
 background_label = tk.Label(root, image=bg_image)
@@ -42,6 +42,8 @@ def get_input():
     global USE_SPEECH_RECOGNITION
     global VOICE_SAMPLE_TORTOISE
     global VOICE_SAMPLE_COQUI
+    global VITS_SPEAKER
+    global VITS_MODEL_PATH
     USE_TTS = use_tts.get()
     GAME_PATH = game_path.get()
     WEBUI_PATH = webui_path.get()
@@ -52,6 +54,7 @@ def get_input():
     USE_SPEECH_RECOGNITION = use_speech_recognition.get()
     VOICE_SAMPLE_TORTOISE = voice_sample_tortoise.get()
     VOICE_SAMPLE_COQUI = voice_sample_coqui.get()
+    VITS_SPEAKER = vits_speaker.get()
     root.destroy()
 
 other_frame = tk.LabelFrame(
@@ -74,21 +77,50 @@ tts_model = tk.StringVar()
 use_speech_recognition = tk.StringVar()
 voice_sample_tortoise = tk.StringVar()  
 voice_sample_coqui = tk.StringVar()
+vits_speaker = tk.StringVar()
 character_json = tk.StringVar()
+
+# Use default VITS model path
+VITS_MODEL_PATH = os.path.join("VITS_model", "model.pth")
+if not os.path.exists("VITS_model"):
+    os.makedirs("VITS_model")
+    
+def verify_vits_model():
+    if not os.path.exists(VITS_MODEL_PATH):
+        tk.messagebox.showwarning(
+            "VITS Model Missing",
+            f"VITS model not found at {VITS_MODEL_PATH}. Please ensure you have a trained VITS model."
+        )
 
 # General Settings
 bold_font = ('helvetic', 10, 'bold')
 
-tk.Label(other_frame, text="Game Path", bg=menu_background_pink, fg='white', font=bold_font).grid(row=1, column=0)
-tk.Label(other_frame, text="Launch Yourself", bg=menu_background_pink, fg='white', font=bold_font).grid(row=1, column=3)
-tk.Label(other_frame, text="Use Actions", bg=menu_background_pink, fg='white', font=bold_font).grid(row=2, column=0)
-tk.Label(other_frame, text="Use TTS", bg=menu_background_pink, fg='white', font=bold_font).grid(row=3, column=0)
-tk.Label(other_frame, text="TTS model", bg=menu_background_pink, fg='white', font=bold_font).grid(row=3, column=3)
-tk.Label(other_frame, text="Use Speech Recognition", bg=menu_background_pink, fg='white', font=bold_font).grid(row=6, column=0)
-tk.Label(other_frame, text="Tortoise Voice Sample", bg=menu_background_pink, fg='white', font=bold_font).grid(row=7, column=0)
-tk.Label(other_frame, text="Voice Sample", bg=menu_background_pink, fg='white', font=bold_font).grid(row=7, column=3)
-tk.Label(other_frame, text="WebUI Path", bg=menu_background_pink, fg='white', font=bold_font).grid(row=9, column=0)
-tk.Label(other_frame, text="Launch Yourself", bg=menu_background_pink, fg='white', font=bold_font).grid(row=9, column=3)
+# Create all labels but don't grid them yet
+game_path_label = tk.Label(other_frame, text="Game Path", bg=menu_background_pink, fg='white', font=bold_font)
+launch_yourself_label1 = tk.Label(other_frame, text="Launch Yourself", bg=menu_background_pink, fg='white', font=bold_font)
+use_actions_label = tk.Label(other_frame, text="Use Actions", bg=menu_background_pink, fg='white', font=bold_font)
+use_tts_label = tk.Label(other_frame, text="Use TTS", bg=menu_background_pink, fg='white', font=bold_font)
+tts_model_label = tk.Label(other_frame, text="TTS model", bg=menu_background_pink, fg='white', font=bold_font)
+speech_recognition_label = tk.Label(other_frame, text="Use Speech Recognition", bg=menu_background_pink, fg='white', font=bold_font)
+tortoise_label = tk.Label(other_frame, text="Tortoise Voice Sample", bg=menu_background_pink, fg='white', font=bold_font)
+voice_sample_label = tk.Label(other_frame, text="Voice Sample", bg=menu_background_pink, fg='white', font=bold_font)
+vits_speaker_label = tk.Label(other_frame, text="VITS Speaker", bg=menu_background_pink, fg='white', font=bold_font)
+webui_path_label = tk.Label(other_frame, text="WebUI Path", bg=menu_background_pink, fg='white', font=bold_font)
+launch_yourself_label2 = tk.Label(other_frame, text="Launch Yourself", bg=menu_background_pink, fg='white', font=bold_font)
+
+# Grid the permanent labels
+game_path_label.grid(row=1, column=0)
+launch_yourself_label1.grid(row=1, column=3)
+use_actions_label.grid(row=2, column=0)
+use_tts_label.grid(row=3, column=0)
+tts_model_label.grid(row=3, column=3)
+speech_recognition_label.grid(row=6, column=0)
+webui_path_label.grid(row=9, column=0)
+launch_yourself_label2.grid(row=9, column=3)
+
+# Voice-related labels will be managed by update_speaker_options()
+tortoise_label.grid(row=7, column=0)
+voice_sample_label.grid(row=7, column=3)
 
 # Textual Inputs
 game_path_entry = tk.Entry(other_frame, textvariable=game_path, width=25, bg=doki_white, fg='black')
@@ -99,24 +131,52 @@ webui_path_entry.grid(row=9, column=1)
 load_from_json("GAME_PATH", game_path_entry)
 load_from_json("WEBUI_PATH", webui_path_entry)
 
-tts_menu = tk.OptionMenu(other_frame, tts_model, "Your TTS", "XTTS", "Tortoise TTS")
+def update_speaker_options(*args):
+    if tts_model.get() == "VITS":
+        # Verify VITS model exists when selected
+        verify_vits_model()
+        # Show VITS options
+        vits_speaker_entry.grid(row=8, column=1)
+        vits_speaker_label.grid(row=8, column=0)
+        # Hide other voice sample options
+        voice_menu_tortoise.grid_remove()
+        voice_menu_coqui.grid_remove()
+        tortoise_label.grid_remove()
+        voice_sample_label.grid_remove()
+    else:
+        # Hide VITS options
+        vits_speaker_entry.grid_remove()
+        vits_speaker_label.grid_remove()
+        # Show other voice sample options
+        voice_menu_tortoise.grid(row=7, column=1)
+        voice_menu_coqui.grid(row=7, column=4)
+        tortoise_label.grid(row=7, column=0)
+        voice_sample_label.grid(row=7, column=3)
+
+tts_menu = tk.OptionMenu(other_frame, tts_model, "Your TTS", "XTTS", "Tortoise TTS", "VITS")
 tts_menu.config(bg=doki_white, fg='black')
 tts_menu.grid(row=3, column=4)
+tts_model.trace('w', update_speaker_options)
+
+# VITS speaker selection
+vits_speaker_entry = tk.Entry(other_frame, textvariable=vits_speaker, width=25, bg=doki_white, fg='black')
+vits_speaker_entry.grid(row=8, column=1)
+vits_speaker_entry.grid_remove()
 
 # Voice sample selections
 all_voices_tortoise = os.listdir("tortoise_audios")
 all_voices_tortoise = [x for x in all_voices_tortoise if not x.endswith(".txt")]
-voice_menu = tk.OptionMenu(other_frame, voice_sample_tortoise, *all_voices_tortoise)
-voice_menu.config(bg=doki_white, fg='black')
-voice_menu.grid(row=8, column=1)
+voice_menu_tortoise = tk.OptionMenu(other_frame, voice_sample_tortoise, *all_voices_tortoise)
+voice_menu_tortoise.config(bg=doki_white, fg='black')
+voice_menu_tortoise.grid(row=8, column=1)
 
 all_voices_coquiai = os.listdir("coquiai_audios")
 all_voices_coquiai = [x for x in all_voices_coquiai if x.endswith(".wav")]
 if len(all_voices_coquiai) == 0:
     all_voices_coquiai = ["No voices found"]
-voice_menu = tk.OptionMenu(other_frame, voice_sample_coqui, *all_voices_coquiai)
-voice_menu.config(bg=doki_white, fg='black')
-voice_menu.grid(row=8, column=4)
+voice_menu_coqui = tk.OptionMenu(other_frame, voice_sample_coqui, *all_voices_coquiai)
+voice_menu_coqui.config(bg=doki_white, fg='black')
+voice_menu_coqui.grid(row=8, column=4)
 
 aspect_params = {
     "bg": menu_background_pink,
@@ -156,6 +216,7 @@ if not os.path.exists("config.json"):
     use_speech_recognition.set(0)
     voice_sample_tortoise.set("Choose a Tortoise voice sample")
     voice_sample_coqui.set("Choose a voice sample")
+    vits_speaker.set("0")
 
 else:
     with open("config.json", "r") as f:
@@ -170,6 +231,7 @@ else:
     USE_SPEECH_RECOGNITION = config["USE_SPEECH_RECOGNITION"]
     VOICE_SAMPLE_COQUI = config["VOICE_SAMPLE_COQUI"]
     VOICE_SAMPLE_TORTOISE = config["VOICE_SAMPLE_TORTOISE"]
+    VITS_SPEAKER = config.get("VITS_SPEAKER", "Speaker1")
     # Set saved values
     launch_yourself.set(LAUNCH_YOURSELF)
     launch_yourself_webui.set(LAUNCH_YOURSELF_WEBUI)
@@ -179,6 +241,7 @@ else:
     use_speech_recognition.set(USE_SPEECH_RECOGNITION)
     voice_sample_tortoise.set(VOICE_SAMPLE_TORTOISE)
     voice_sample_coqui.set(VOICE_SAMPLE_COQUI)
+    vits_speaker.set(VITS_SPEAKER)
 
 def on_closing():
     root.destroy()
@@ -205,6 +268,8 @@ CONFIG = {
     "USE_SPEECH_RECOGNITION": USE_SPEECH_RECOGNITION,
     "VOICE_SAMPLE_TORTOISE": VOICE_SAMPLE_TORTOISE,
     "VOICE_SAMPLE_COQUI": VOICE_SAMPLE_COQUI,
+    "VITS_SPEAKER": VITS_SPEAKER,
+    "VITS_MODEL_PATH": VITS_MODEL_PATH
 }
 
 with open("config.json", "w") as f:
