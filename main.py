@@ -192,7 +192,7 @@ def post_message(page, message):
     else:
         page.fill("[class='svelte-1f354aw pretty_scrollbar']", message)
     page.click('[id="Generate"]')
-    page.wait_for_selector('[class="lg secondary svelte-cmf5ev hidden"]')
+    page.wait_for_selector('[id="stop"]')
 
 
 # Main
@@ -322,42 +322,50 @@ def listenToClient(client):
                 pw.stop()
                 continue
             while True:
-                stop_button = page.locator('[class="lg secondary svelte-cmf5ev hidden"]')
-                stop_button_style = stop_button.get_attribute("style")
-                if "display: none;" in stop_button_style:
-                    user = page.locator('[class="message-body"]').locator("nth=-1")
-                    text = user.inner_html()
-                    if len(text) > 0:
-                        msg = text
-                        msg = re.sub(r'<[^>]+>', '', msg)
-                        msg = msg.replace('\n', '')
-                        msg = os.linesep.join([s for s in msg.splitlines() if s])
-                        msg = re.sub(' +', ' ', msg)
-                        msg = re.sub(r'&[^;]+;', '', msg)
-                        msg = msg.replace("END", "")
-                    else:
-                        continue
-                    if received_msg != "QUIT":
-                        if USE_TTS:
-                            print("Using TTS")
-                            play_obj = play_TTS(
-                                step,
-                                msg,
-                                play_obj,
-                                sampling_rate,
-                                tts_model,
-                                voice_samples,
-                                conditioning_latents,
-                                TTS_MODEL,
-                                VOICE_SAMPLE_COQUI,
-                                uni_chr_re,
-                                CONFIG.get("VITS_SPEAKER") if TTS_MODEL == "VITS" else None
-                            )
-                        print("Sent: " + msg)
-                        send_answer(received_msg, msg)
-                    break
-
-
+                try:
+                    # Get all stop buttons and check their visibility
+                    stop_buttons = page.locator('[id="stop"]').all()
+                    # If any stop button is visible, we're still generating
+                    is_generating = any(button.is_visible() for button in stop_buttons)
+                    
+                    if not is_generating:
+                        user = page.locator('[class="message-body"]').locator("nth=-1")
+                        text = user.inner_html()
+                        if len(text) > 0:
+                            msg = text
+                            msg = re.sub(r'<[^>]+>', '', msg)
+                            msg = msg.replace('\n', '')
+                            msg = os.linesep.join([s for s in msg.splitlines() if s])
+                            msg = re.sub(' +', ' ', msg)
+                            msg = re.sub(r'&[^;]+;', '', msg)
+                            msg = msg.replace("END", "")
+                        else:
+                            continue
+                        if received_msg != "QUIT":
+                            if USE_TTS:
+                                print("Using TTS")
+                                play_obj = play_TTS(
+                                    step,
+                                    msg,
+                                    play_obj,
+                                    sampling_rate,
+                                    tts_model,
+                                    voice_samples,
+                                    conditioning_latents,
+                                    TTS_MODEL,
+                                    VOICE_SAMPLE_COQUI,
+                                    uni_chr_re,
+                                    CONFIG.get("VITS_SPEAKER") if TTS_MODEL == "VITS" else None
+                                )
+                            print("Sent: " + msg)
+                            send_answer(received_msg, msg)
+                        break
+                except Exception as e:
+                print("Error checking generation status:", e)
+                launched = False
+                pw.stop()
+                break
+                
 if __name__ == "__main__":
     SERVER.listen(5)
     ACCEPT_THREAD = Thread(target=listen)
