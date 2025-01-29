@@ -44,7 +44,7 @@
 This project aims to add new AI based features to [Monika After Story mod](https://github.com/Monika-After-Story/MonikaModDev) with the submod API.
 It's using multiple AI models:
 - [text-generation-webui](https://github.com/oobabooga/text-generation-webui)
-- [TTS Coqui-AI](https://github.com/coqui-ai/TTS) and [Tortoise-TTS](https://github.com/152334H/tortoise-tts-fast) for Text to Speech
+- [TTS Coqui-AI suite](https://github.com/idiap/coqui-ai-TTS) and [Tortoise-TTS](https://github.com/152334H/tortoise-tts-fast) for Text to Speech
 - [OpenAI Whisper](https://github.com/openai/whisper) with [microphone option](https://github.com/mallorbc/whisper_mic) for Speech to Text
 - [Emotion detection from text model](https://huggingface.co/michellejieli/emotion_text_classifier) is also used linked with the chatbot
 - NLI Classification with [deberta](https://huggingface.co/sileod/deberta-v3-base-tasksource-nli)
@@ -107,5 +107,4 @@ There is also the possibility of using buttons on the main screen to directly ch
 ## 📖 Written tutorial
 https://www.reddit.com/user/Sylphar/comments/1f91nsf/streamlined_new_monikai_guide/
 ## :cinema: Video Demonstration
-
-https://user-images.githubusercontent.com/66365083/209359921-a4fdad5e-abbd-4550-a1fb-62d695e76c51.mp4
+https://youtu.be/HizH2P2fzXs
