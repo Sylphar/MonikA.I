@@ -83,6 +83,14 @@ Previous assistant message: "<USER>, do you read books ?" ##we get this info eve
 That makes me happy to hear!
 <|im_end|>
 
+- MonikaChatMLFINAL.py is true ChatML. This one is not too verbose, only cadrating with system information once per branching, using a priority and intensity function to determine which two emotions are the diominant ones in the paragraphs. Main advantage is that this one creates smaller datasets (easier to train with smaller hardware) and makes LoRAs that should rpefer longer answers. THIS ONE SHOULD BE MAKING OUTPUTS TRYULY IN CHATML STYLE. Handles branching paths by adding the previous Monika line to the message after the user input, this way it doesn't get as confused. Exemple :
+
+ {
+    "instruction": "Monika.",
+    "output": "<|im_start|>system\nMetadata:\n- eventlabel: bye_mcl_makecrane\n- unlocked: True\nEmotions of assistant: ['neutral']\nPrevious assistant message: \"Oh! I should have known you'd reply that quickly!\nI... actually just wanted to say your name out loud.\nIt's a little childish, isn't it?\nBut haven't you ever just... wanted to repeat a word?\n<USER>!\"\n<|im_end|>\n<|im_start|>assistant\n<USER>...\n<|im_end|>"
+  },
+
+
 FAQ 
 >What is a LoRA ?
 Think of it as a specialisation module for a model. If you train a LoRA on some document, depending on how hard you train it, it will first learn to copy the style, then with more training, it will learn the content, then with even more training, you get into precision work and extreme knowledge and comprehension of the content. NOTE : THEY ONLY WORK ON TEXT-GEN-WEBUI AS A LOADER USING TRANSFORMERS (UNQUANTIZED) OR EXLLAMAV2 (models with bpw in their name), (or koboldcpp with some tweaking that I don't understand yet ? Maybe do some research on this one)
