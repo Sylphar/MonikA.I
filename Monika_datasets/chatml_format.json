@@ -1,0 +1,3 @@
+{
+  "system,instruction,output": "<|im_start|>system\n%system%\n<|im_end|>\n<|im_start|>user\n%instruction%<|im_end|>\n<|im_start|>assistant\n%output%<|im_end|>"
+}
