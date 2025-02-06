@@ -144,7 +144,59 @@ class DialogueExtractor:
             'interested': 1,
             'cheerful': 1
         }
-
+        self.label_map = {}  # Maps label names to their dialogue content
+        self.menu_map = {}   # Maps menu choices to their target labels
+        
+        
+    def first_pass_scan(self, files_content: Dict[str, str]):
+        """
+        First pass: scan all files to build maps of labels and menus.
+        
+        Args:
+            files_content: Dictionary mapping filenames to their content
+        """
+        for filename, content in files_content.items():
+            lines = content.split('\n')
+            i = 0
+            while i < len(lines):
+                line = lines[i].strip()
+                
+                # Find labels and store their content
+                if line.startswith('label '):
+                    label_name = line[6:].split(':')[0].strip()
+                    label_content = []
+                    j = i + 1
+                    while j < len(lines) and (lines[j].strip() == '' or count_indent(lines[j]) > count_indent(lines[i])):
+                        if 'm ' in lines[j] and '"' in lines[j]:
+                            label_content.append(lines[j])
+                        j += 1
+                    self.label_map[label_name] = {
+                        'content': label_content,
+                        'file': filename
+                    }
+                    i = j
+                    continue
+                
+                # Find menu definitions
+                elif line.startswith('python:'):
+                    j = i + 1
+                    while j < len(lines) and count_indent(lines[j]) > count_indent(lines[i]):
+                        menu_line = lines[j].strip()
+                        if '(' in menu_line and ')' in menu_line and '"' in menu_line:
+                            choice_match = re.search(r'"([^"]+)".*?\'([^\']+)\'', menu_line)
+                            if choice_match:
+                                choice_text = self.clean_dialogue(choice_match.group(1))
+                                target_label = choice_match.group(2)
+                                self.menu_map[choice_text] = {
+                                    'label': target_label,
+                                    'file': filename
+                                }
+                        j += 1
+                    i = j
+                    continue
+                
+                i += 1
+                
     def get_emotions(self, sprite_code: str) -> List[str]:
         """Extract highest priority emotion from sprite code."""
         if not sprite_code:
@@ -332,7 +384,6 @@ class DialogueExtractor:
 
         return formatted_data
 
-
     def create_continuation_instruction(self, prev_messages):
         """Create instruction for continuation points."""
         if not prev_messages:
@@ -406,36 +457,37 @@ class DialogueExtractor:
         
         return grouped_entries
     
-    def extract_dialogue(self, content: str) -> List[Dict]:
+    def extract_dialogue(self, content: str, filename: str) -> List[Dict]:
         """
         Extract dialogue entries from the Ren'Py file.
-        A new conversation block is forced whenever a new event is encountered.
-        In each conversation block, only the first assistant message gets metadata.
-        Additionally, for each user choice line, we record the branch context (the last assistant message trimmed to 150 characters)
-        using indentation levels.
+        Now handles both traditional event-based and label-based dialogue structures,
+        while preserving proper menu branching.
         """
-        logging.info("Starting dialogue extraction")
+        logging.info(f"Starting dialogue extraction for {filename}")
         lines = content.split('\n')
         dialogue_entries = []
-        # branch_stack: each element is a tuple (indent_level, branch_context)
-        branch_stack = []
         current_metadata = None
         in_dialogue = False
-        metadata_attached = False  # Flag: whether metadata has been attached in the current conversation block
-        last_assistant_msg = ""    # Holds the full text of the most recent assistant message
+        metadata_attached = False
+        branch_stack = []  # Will now store tuples of (indent_level, context, last_assistant_msg)
+        last_assistant_msg = ""
+        current_indent_level = 0
+
+        # Check file type
+        has_init = any('init 5 python:' in line or 'init 6 python:' in line for line in lines)
+        is_label_based = not has_init and any(line.strip().startswith('label ') for line in lines)
 
         i = 0
         while i < len(lines):
             line = lines[i]
             stripped_line = line.strip()
+
             try:
-                # --- Detect start of a new dialogue event ---
-                if 'init 5 python:' in stripped_line:
-                    # If already inside a dialogue block, insert a separator entry.
+                # Handle traditional event-based dialogue
+                if ('init 5 python:' in stripped_line or 'init 6 python:' in stripped_line):
                     if in_dialogue:
                         dialogue_entries.append({"type": "separator"})
-                        logging.debug("Inserted conversation separator before new event")
-                    # Look ahead for an addEvent call to extract metadata.
+                    
                     j = i + 1
                     found_event = False
                     while j < min(i + 10, len(lines)):
@@ -443,173 +495,238 @@ class DialogueExtractor:
                             metadata, end_index = self.parse_event_metadata(content, j)
                             current_metadata = metadata.copy()
                             in_dialogue = True
-                            metadata_attached = False  # Reset for new conversation block
-                            branch_stack = []  # Reset branch contexts
+                            metadata_attached = False
+                            branch_stack = []
                             last_assistant_msg = ""
-                            logging.debug(f"NEW CONVERSATION STARTED - Metadata: {current_metadata}")
                             found_event = True
-                            i = end_index  # Skip metadata definition lines
+                            i = end_index
                             break
                         j += 1
                     if found_event:
                         i += 1
                         continue
 
-                # --- Detect end of dialogue section ---
-                if (('init' in stripped_line and 'python' in stripped_line and in_dialogue) or ('return "derandom"' in stripped_line)):
-                    logging.debug("ENDING CONVERSATION - Resetting metadata and branch stack")
-                    in_dialogue = False
-                    current_metadata = None
+                # Handle label-based dialogue
+                elif is_label_based and stripped_line.startswith('label '):
+                    if in_dialogue:
+                        dialogue_entries.append({"type": "separator"})
+                    
+                    label_name = stripped_line[6:].split(':')[0].strip()
+                    current_metadata = {'eventlabel': label_name}
+                    in_dialogue = True
                     metadata_attached = False
                     branch_stack = []
-                    i += 1
+                    last_assistant_msg = ""
+
+                # Handle Python block menus (cross-file references)
+                elif stripped_line.startswith('python:'):
+                    menu_data = []
+                    j = i + 1
+                    current_indent = count_indent(line)
+                    
+                    while j < len(lines) and count_indent(lines[j]) > current_indent:
+                        menu_line = lines[j].strip()
+                        if '(' in menu_line and ')' in menu_line and '"' in menu_line:
+                            choice_match = re.search(r'"([^"]+)".*?\'([^\']+)\'', menu_line)
+                            if choice_match:
+                                choice_text = self.clean_dialogue(choice_match.group(1))
+                                target_label = choice_match.group(2)
+                                
+                                # Create menu choice entry
+                                menu_entry = {
+                                    'type': 'user',
+                                    'text': choice_text,
+                                    'branch_context': last_assistant_msg[-150:] if last_assistant_msg else "",
+                                    'metadata': current_metadata if not metadata_attached else None,
+                                    'target_label': target_label
+                                }
+                                
+                                if target_label in self.label_map:
+                                    label_info = self.label_map[target_label]
+                                    menu_entry['label_file'] = label_info['file']
+                                    if label_info['file'] != filename:
+                                        menu_entry['label_content'] = label_info['content']
+                                
+                                menu_data.append(menu_entry)
+                        j += 1
+                    dialogue_entries.extend(menu_data)
+                    i = j
                     continue
 
-                # --- Process lines if inside a dialogue section ---
-                if in_dialogue:
-                    # When we encounter a menu marker (this line alone may not change branch context)
-                    if stripped_line == "menu:":
-                        logging.debug("MENU DETECTED")
-                        # (We don’t push anything yet; we'll use the first option line below.)
+                # Handle regular menu marker (When entering a menu)
+                elif stripped_line == "menu:":
+                    logging.debug("MENU DETECTED")
+                    current_indent = count_indent(line)
+                    if not branch_stack:
+                        # First menu: use the last assistant message before the menu
+                        branch_stack.append((current_indent, last_assistant_msg[-150:] if last_assistant_msg else "", last_assistant_msg))
+                        logging.debug(f"Branch stack empty. Pushed: {current_indent}, context: {branch_stack[-1][1]}")
+
+                # Handle menu choices (both in standard menus and Python blocks)
+                elif stripped_line.startswith('"'):
+                    current_indent = count_indent(line)
+                    
+                    if not branch_stack:
+                        # Shouldn't happen, but handle it just in case
+                        branch_stack.append((current_indent, last_assistant_msg[-150:] if last_assistant_msg else "", last_assistant_msg))
+                        logging.debug(f"Branch stack empty. Pushed: {current_indent}, context: {branch_stack[-1][1]}")
+                    else:
+                        # Find the appropriate parent branch by looking at indentation
+                        parent_branch = None
+                        for branch in reversed(branch_stack):
+                            if branch[0] < current_indent:
+                                parent_branch = branch
+                                break
                         
-                    # Process a user choice line (one that starts with a quotation mark)
-                    elif stripped_line.startswith('"'):
-                        current_indent = count_indent(line)
-                        # Manage the branch stack using the indentation level.
-                        if not branch_stack:
-                            branch_context = last_assistant_msg[-150:] if last_assistant_msg else ""
-                            branch_stack.append((current_indent, branch_context))
-                            logging.debug(f"Branch stack empty. Pushed: {(current_indent, branch_context)}")
+                        if parent_branch:
+                            # Use the last assistant message from the parent branch as context
+                            branch_context = parent_branch[2][-150:] if parent_branch[2] else ""
+                            branch_stack.append((current_indent, branch_context, parent_branch[2]))
+                            logging.debug(f"Nested branch detected. Parent indent: {parent_branch[0]}, Current indent: {current_indent}")
+                            logging.debug(f"Using context from parent: {branch_context}")
                         else:
-                            top_indent, top_context = branch_stack[-1]
-                            if current_indent > top_indent:
-                                # Entering a nested branch: push the new context.
-                                branch_context = last_assistant_msg[-150:] if last_assistant_msg else ""
-                                branch_stack.append((current_indent, branch_context))
-                                logging.debug(f"Nested branch detected. Pushed: {(current_indent, branch_context)}")
-                            elif current_indent < top_indent:
-                                # Exiting one or more nested branches.
-                                while branch_stack and branch_stack[-1][0] > current_indent:
-                                    popped = branch_stack.pop()
-                                    logging.debug(f"Popped branch context: {popped}")
-                                if branch_stack:
-                                    branch_context = branch_stack[-1][1]
-                                else:
-                                    branch_context = last_assistant_msg[-150:] if last_assistant_msg else ""
-                                    branch_stack.append((current_indent, branch_context))
-                            else:
-                                # current_indent == top_indent; same level: update the context.
-                                branch_context = last_assistant_msg[-150:] if last_assistant_msg else ""
-                                branch_stack[-1] = (current_indent, branch_context)
-                        # Append the user choice entry with the current branch context.
-                        choice_text = self.clean_dialogue(stripped_line.strip('":'))
-                        dialogue_entries.append({
-                            'type': 'user',
-                            'text': choice_text,
-                            'branch_context': branch_context,
+                            # No parent found (at root level)
+                            branch_context = last_assistant_msg[-150:] if last_assistant_msg else ""
+                            branch_stack.append((current_indent, branch_context, last_assistant_msg))
+                    
+                    choice_text = self.clean_dialogue(stripped_line.strip('":'))
+                    # Use the context from the current branch's parent
+                    parent_context = ""
+                    for branch in reversed(branch_stack[:-1]):  # Exclude current branch
+                        if branch[0] < current_indent:
+                            parent_context = branch[2][-150:] if branch[2] else ""
+                            break
+                    if not parent_context and branch_stack:
+                        parent_context = branch_stack[0][2][-150:] if branch_stack[0][2] else ""
+                    
+                    dialogue_entries.append({
+                        'type': 'user',
+                        'text': choice_text,
+                        'branch_context': parent_context,
+                        'metadata': current_metadata if not metadata_attached else None
+                    })
+                    logging.debug(f"CHOICE ADDED: {choice_text} with branch context: {parent_context}")
+
+                # Handle Monika's dialogue
+                elif ('m ' in stripped_line and '"' in stripped_line) or ('extend ' in stripped_line and '"' in stripped_line):
+                    sprite_match = re.search(r'm\s+\d([a-zA-Z]+)', stripped_line)
+                    dialogue_match = re.search(r'm [^"]*"([^"]*)"', stripped_line)
+                    
+                    if dialogue_match:
+                        text = self.clean_dialogue(dialogue_match.group(1))
+                        current_indent = count_indent(line)
+                        
+                        # Update the last assistant message for the current branch level
+                        if branch_stack:
+                            # Find the current branch based on indentation
+                            current_branch = None
+                            for branch in reversed(branch_stack):
+                                if branch[0] < current_indent:
+                                    current_branch = branch
+                                    break
+                            
+                            if current_branch:
+                                # Update the last assistant message for this branch
+                                idx = branch_stack.index(current_branch)
+                                branch_stack[idx] = (current_branch[0], current_branch[1], text)
+                        
+                        last_assistant_msg = text
+                        
+                        if sprite_match:
+                            sprite_code = sprite_match.group(1)
+                            emotions = self.get_emotions(sprite_code)
+                        else:
+                            emotions = ['neutral']
+                        
+                        entry = {
+                            'type': 'assistant',
+                            'text': text,
+                            'emotions': emotions,
                             'metadata': current_metadata if not metadata_attached else None
-                        })
-                        logging.debug(f"CHOICE ADDED: {choice_text} with branch context: {branch_context}")
+                        }
+                        dialogue_entries.append(entry)
+                        metadata_attached = True
 
-                    # Process an assistant dialogue line (look for a line starting with 'm ' or 'extend' and containing quoted text)
-                    elif ('m ' in stripped_line and '"' in stripped_line) or ('extend ' in stripped_line and '"' in stripped_line):
-                        sprite_match = re.search(r'm\s+\d([a-zA-Z]+)', stripped_line)
-                        dialogue_match = re.search(r'm [^"]*"([^"]*)"', stripped_line)
-                        if dialogue_match:
-                            text = self.clean_dialogue(dialogue_match.group(1))
-                            last_assistant_msg = text  # Update the current assistant message
-                            if sprite_match:
-                                sprite_code = sprite_match.group(1)
-                                emotions = self.get_emotions(sprite_code)
-                            else:
-                                emotions = ['neutral']
-                            entry = {
-                                'type': 'assistant',
-                                'text': text,
-                                'emotions': emotions,
-                                'metadata': current_metadata if not metadata_attached else None
-                            }
-                            dialogue_entries.append(entry)
-                            logging.debug(f"ASSISTANT LINE ADDED: {text} - Metadata: {entry['metadata']}")
-                            if not metadata_attached:
-                                logging.debug("Metadata attached to first message of this block")
-                            metadata_attached = True
+                # Handle end of menu sections
+                elif stripped_line.startswith('return') and branch_stack:
+                    popped = branch_stack.pop()
+                    logging.debug(f"Menu section ended, popped branch: {popped}")
 
-                    # If a menu ends, indicated by a 'return' line when a branch exists, pop the branch.
-                    elif stripped_line.startswith('return') and branch_stack:
-                        popped = branch_stack.pop()
-                        logging.debug(f"MENU SECTION ENDED, popped branch context: {popped}")
-            # End if in_dialogue
-            # (Any other lines are ignored.)
-            # End try
             except Exception as e:
-                logging.error(f"Error processing line {i}: {str(e)}")
+                logging.error(f"Error processing line {i} in {filename}: {str(e)}")
                 logging.error(f"Line content: {line}")
+
             i += 1
 
-        logging.debug(f"TOTAL DIALOGUE ENTRIES: {len(dialogue_entries)}")
+        logging.debug(f"Extracted {len(dialogue_entries)} dialogue entries from {filename}")
         return dialogue_entries
 
-def process_file(input_path: str, output_path: str):
-    """Process a single .rpy file."""
-    logging.info(f"Processing file: {input_path}")
-    extractor = DialogueExtractor()
-    
-    try:
-        with open(input_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+    def process_files(self, input_files: List[str], output_folder: str):
+        """
+        Process multiple files with cross-file reference handling.
+        """
+        # First, read all files
+        files_content = {}
+        for input_file in input_files:
+            with open(input_file, 'r', encoding='utf-8') as f:
+                files_content[input_file] = f.read()
         
-        dialogue_entries = extractor.extract_dialogue(content)
-        formatted_data = extractor.format_to_chatml(dialogue_entries)
+        # First pass: build maps
+        self.first_pass_scan(files_content)
         
-        # Write as a proper JSON file with a list of conversations
-        with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(formatted_data, f, indent=2, ensure_ascii=False)
+        # Second pass: process each file with access to the maps
+        for input_file in input_files:
+            output_path = os.path.join(
+                output_folder,
+                os.path.basename(input_file).replace('.rpy', '_dialogue.json')
+            )
             
-        logging.info(f"Successfully processed {input_path}")
+            dialogue_entries = self.extract_dialogue(files_content[input_file], input_file)
+            formatted_data = self.format_to_chatml(dialogue_entries)
             
-    except Exception as e:
-        logging.error(f"Error processing {input_path}: {str(e)}")
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(formatted_data, f, indent=2, ensure_ascii=False)
 
 def process_folder(input_folder: str, output_folder: str):
-    """Process all .rpy files in a folder and create both individual and combined outputs."""
+    """Process all .rpy files in a folder with cross-file reference handling."""
     Path(output_folder).mkdir(parents=True, exist_ok=True)
     
-    # List to store all dialogue data
-    all_dialogues = []
-    
+    # First, collect all file contents
+    files_content = {}
     for root, _, files in os.walk(input_folder):
         for file in files:
             if file.endswith('.rpy'):
                 input_path = os.path.join(root, file)
-                individual_output_path = os.path.join(
-                    output_folder, 
-                    file.replace('.rpy', '_dialogue.json')
-                )
-                
-                try:
-                    # Process individual file
-                    with open(input_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    
-                    extractor = DialogueExtractor()
-                    dialogue_entries = extractor.extract_dialogue(content)
-                    formatted_data = extractor.format_to_chatml(dialogue_entries)
-                    
-                    # Write individual file
-                    with open(individual_output_path, 'w', encoding='utf-8') as f:
-                        json.dump(formatted_data, f, indent=2, ensure_ascii=False)
-                    
-                    # Add to combined data
-                    all_dialogues.extend(formatted_data)
-                    
-                    logging.info(f"Successfully processed {input_path}")
-                    
-                except Exception as e:
-                    logging.error(f"Error processing {input_path}: {str(e)}")
+                with open(input_path, 'r', encoding='utf-8') as f:
+                    files_content[file] = f.read()
+    
+    # Create extractor and build the label map
+    extractor = DialogueExtractor()
+    extractor.first_pass_scan(files_content)
+    
+    # Process each file
+    all_dialogues = []
+    for file, content in files_content.items():
+        individual_output_path = os.path.join(
+            output_folder, 
+            file.replace('.rpy', '_dialogue.json')
+        )
+        
+        try:
+            dialogue_entries = extractor.extract_dialogue(content, file)
+            formatted_data = extractor.format_to_chatml(dialogue_entries)
+            
+            with open(individual_output_path, 'w', encoding='utf-8') as f:
+                json.dump(formatted_data, f, indent=2, ensure_ascii=False)
+            
+            all_dialogues.extend(formatted_data)
+            logging.info(f"Successfully processed {file}")
+            
+        except Exception as e:
+            logging.error(f"Error processing {file}: {str(e)}")
     
     # Write combined output
-    combined_output_path = os.path.join(output_folder, "MoniDatabaseChatMLParagraphs.json")
+    combined_output_path = os.path.join(output_folder, "MoniDataset.json")
     try:
         with open(combined_output_path, 'w', encoding='utf-8') as f:
             json.dump(all_dialogues, f, indent=2, ensure_ascii=False)
