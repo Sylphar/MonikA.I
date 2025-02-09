@@ -1,3 +1,4 @@
 {
-  "system,instruction,output": "<|im_start|>system\n%system%\n<|im_end|>\n<|im_start|>user\n%instruction%<|im_end|>\n<|im_start|>assistant\n%output%<|im_end|>"
+  "system,instruction,output": "<|im_start|>system\n%system%<|im_end|>\n<|im_start|>user\n%instruction%<|im_end|>\n<|im_start|>assistant\n%output%<|im_end|>",
+  "system,instruction,input,output": "<|im_start|>system\n%system%<|im_end|>\n<|im_start|>user\n%instruction%: %input%<|im_end|>\n<|im_start|>assistant\n%output%<|im_end|>"
 }
