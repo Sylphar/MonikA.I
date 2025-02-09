@@ -355,26 +355,56 @@ class DialogueExtractor:
             if entry['type'] == 'assistant':
                 if not system_set:
                     system_parts = []
-                    if entry.get('metadata'):
-                        system_parts.append("Metadata = " + str(entry['metadata']))
+                    metadata = entry.get('metadata')
+                    
+                    # If the instruction is empty, try to fill it based on metadata.
+                    if not current_conversation["instruction"]:
+                        parsed_metadata = None
+                        if metadata:
+                            # If metadata is already a dict, use it directly; otherwise try parsing it.
+                            if isinstance(metadata, dict):
+                                parsed_metadata = metadata
+                            else:
+                                try:
+                                    parsed_metadata = ast.literal_eval(metadata)
+                                except Exception:
+                                    parsed_metadata = None
+                        # Now apply our fallback rules.
+                        if parsed_metadata:
+                            if parsed_metadata.get('prompt'):
+                                current_conversation["instruction"] = f"Hey Monika, what do you have to say about: {parsed_metadata['prompt']}"
+                            elif parsed_metadata.get('random') is True:
+                                current_conversation["instruction"] = "*idling*"
+                            else:
+                                current_conversation["instruction"] = "Oh, I see, please continue."
+                        else:
+                            # No metadata available – default fallback.
+                            current_conversation["instruction"] = "Oh, I see, please continue."
+                    
+                    # Build the system string.
+                    if metadata:
+                        system_parts.append("Metadata = " + str(metadata))
                     if entry.get('emotions'):
                         system_parts.append("Emotions of the assistant: " + str(entry['emotions']))
-                    if temp_branch_context:  # Apply the stored previous assistant message
+                    if temp_branch_context:  # Apply the stored previous assistant message.
                         system_parts.append(f"Previous assistant message: \"{temp_branch_context}\"")
-                        temp_branch_context = None  # Clear after applying
+                        temp_branch_context = None  # Clear after applying.
                     current_conversation["system"] = "\n".join(system_parts)
                     system_set = True
+
+                # Append the assistant text to the conversation's output.
                 if current_conversation["output"]:
                     current_conversation["output"] += "\n"
                 current_conversation["output"] += entry["text"]
 
             elif entry['type'] == 'user':
-                # Store the branch_context temporarily for the next assistant block
+                # Store the branch_context temporarily for the next assistant block.
                 if entry.get("branch_context"):
                     temp_branch_context = entry["branch_context"]
 
                 if current_conversation["output"]:
                     formatted_data.append(current_conversation)
+                # Use the user's text as instruction. (If it is empty, our fallback above will later fill it in.)
                 current_conversation = {"system": "", "instruction": entry["text"], "output": ""}
                 system_set = False
 
@@ -383,6 +413,7 @@ class DialogueExtractor:
             logging.debug(f"Final conversation block added with system: {current_conversation['system']}")
 
         return formatted_data
+
 
     def create_continuation_instruction(self, prev_messages):
         """Create instruction for continuation points."""
@@ -687,6 +718,38 @@ class DialogueExtractor:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(formatted_data, f, indent=2, ensure_ascii=False)
 
+def fix_empty_instructions(output_folder: str):
+    """
+    Process all JSON files in the output folder to replace empty or invalid instructions
+    with a default instruction.
+    """
+    import os
+    import json
+    import logging
+    
+    default_instruction = "Monika, what do you have to say today?"
+    
+    for filename in os.listdir(output_folder):
+        if filename.endswith('_dialogue.json'):
+            file_path = os.path.join(output_folder, filename)
+            try:
+                # Read the file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                
+                # Replace problematic instructions
+                content = content.replace('"instruction": ""', f'"instruction": "{default_instruction}"')
+                content = content.replace('"instruction": ")"', f'"instruction": "{default_instruction}"')
+                
+                # Write back to file
+                with open(file_path, 'w', encoding='utf-8') as f:
+                    f.write(content)
+                
+                logging.info(f"Successfully processed instructions in {filename}")
+                
+            except Exception as e:
+                logging.error(f"Error processing {filename}: {str(e)}")
+
 def process_folder(input_folder: str, output_folder: str):
     """Process all .rpy files in a folder with cross-file reference handling."""
     Path(output_folder).mkdir(parents=True, exist_ok=True)
@@ -716,8 +779,19 @@ def process_folder(input_folder: str, output_folder: str):
             dialogue_entries = extractor.extract_dialogue(content, file)
             formatted_data = extractor.format_to_chatml(dialogue_entries)
             
+            # Write with custom formatting
             with open(individual_output_path, 'w', encoding='utf-8') as f:
-                json.dump(formatted_data, f, indent=2, ensure_ascii=False)
+                f.write('[\n')
+                for i, entry in enumerate(formatted_data):
+                    f.write('\t{\n')
+                    f.write(f'\t\t"system": {json.dumps(entry["system"], ensure_ascii=False)},\n')
+                    f.write(f'\t\t"instruction": {json.dumps(entry["instruction"], ensure_ascii=False)},\n')
+                    f.write(f'\t\t"output": {json.dumps(entry["output"], ensure_ascii=False)}\n')
+                    f.write('\t}')
+                    if i < len(formatted_data) - 1:
+                        f.write(',')
+                    f.write('\n')
+                f.write(']')
             
             all_dialogues.extend(formatted_data)
             logging.info(f"Successfully processed {file}")
@@ -725,14 +799,30 @@ def process_folder(input_folder: str, output_folder: str):
         except Exception as e:
             logging.error(f"Error processing {file}: {str(e)}")
     
-    # Write combined output
-    combined_output_path = os.path.join(output_folder, "MoniDataset.json")
+    # Write combined output with same formatting
+    combined_output_path = os.path.join(output_folder, "MoniDatasetLoRA.json")
     try:
         with open(combined_output_path, 'w', encoding='utf-8') as f:
-            json.dump(all_dialogues, f, indent=2, ensure_ascii=False)
+            f.write('[\n')
+            for i, entry in enumerate(all_dialogues):
+                f.write('\t{\n')
+                f.write(f'\t\t"system": {json.dumps(entry["system"], ensure_ascii=False)},\n')
+                f.write(f'\t\t"instruction": {json.dumps(entry["instruction"], ensure_ascii=False)},\n')
+                f.write(f'\t\t"output": {json.dumps(entry["output"], ensure_ascii=False)}\n')
+                f.write('\t}')
+                if i < len(all_dialogues) - 1:
+                    f.write(',')
+                f.write('\n')
+            f.write(']')
         logging.info(f"Successfully created combined output at {combined_output_path}")
+        
+        # Add the new function call here
+        fix_empty_instructions(output_folder)
+        logging.info("Successfully processed all empty instructions")
+        
     except Exception as e:
-        logging.error(f"Error creating combined output: {str(e)}")
+        logging.error(f"Error in final processing: {str(e)}")
+
 
 if __name__ == "__main__":
     input_folder = "rpy_files"
