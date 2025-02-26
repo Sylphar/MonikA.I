@@ -718,6 +718,27 @@ class DialogueExtractor:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(formatted_data, f, indent=2, ensure_ascii=False)
 
+def load_poems_json(file_path):
+    """Read and parse a poems JSON file, ignoring lines starting with '#'."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            lines = [line for line in f if not line.strip().startswith('#')]
+            content = ''.join(lines)
+            return json.loads(content)
+    except json.JSONDecodeError as e:
+        logging.error(f"Error decoding JSON in {file_path}: {str(e)}")
+        return []
+    except Exception as e:
+        logging.error(f"Error loading {file_path}: {str(e)}")
+        return []
+
+def get_name_replacements():
+    """Prompt the user for replacements for <MONIKA> and <USER>."""
+    print("Please provide replacements for <MONIKA> and <USER>. Press Enter to keep defaults.")
+    monika_name = input("Replace <MONIKA> with (default: <MONIKA>): ").strip() or "<MONIKA>"
+    user_name = input("Replace <USER> with (default: <USER>): ").strip() or "<USER>"
+    return monika_name, user_name
+
 def fix_empty_instructions(output_folder: str):
     """
     Process all JSON files in the output folder to replace empty or invalid instructions
@@ -798,6 +819,27 @@ def process_folder(input_folder: str, output_folder: str):
             
         except Exception as e:
             logging.error(f"Error processing {file}: {str(e)}")
+    
+    # Load poems JSON files
+    poems_files = ["My poems.json", "MAS poems.json", "Base game poems.json"]
+    for poems_file in poems_files:
+        file_path = os.path.join(input_folder, poems_file)
+        if os.path.exists(file_path):
+            poems_data = load_poems_json(file_path)
+            all_dialogues.extend(poems_data)
+        else:
+            logging.warning(f"Poems file {poems_file} not found in {input_folder}")
+    
+    # Get name replacements from user
+    monika_name, user_name = get_name_replacements()
+    
+    # Apply replacements to all dialogue entries
+    for entry in all_dialogues:
+        for field in ["system", "instruction", "output"]:
+            if monika_name != "<MONIKA>":
+                entry[field] = entry[field].replace("<MONIKA>", monika_name)
+            if user_name != "<USER>":
+                entry[field] = entry[field].replace("<USER>", user_name)
     
     # Write combined output with same formatting
     combined_output_path = os.path.join(output_folder, "MoniDatasetLoRA.json")
