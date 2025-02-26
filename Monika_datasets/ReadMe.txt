@@ -1,6 +1,31 @@
 These scripts are aimed a making good datasets for Monika LoRAs. They intake the rpy files in, well, rpy-files and extract the dialogues and emotions (by looking at the spritecodes) of each line to create a giant, fomatted compendium of Monika. The rpy files that are already in the folder are those I found to be the most important for me, including all of the base game and some submods I like. 
 None of this is perfect yet, I'm working on it. Notably, I need to know all parameters that exist like [mas_get_player_nickname].
 
+- MonikaLoRA.py is the true way to format the rpy script dialogue data into something that text-gen-webui can recognize for its formatting (if you replace the chatml-format file in training/format by ChatMLFormat here in this repo). This one is not too verbose, only cadrating with system information once per branching, using a priority and intensity function to determine which two emotions are the diominant ones in the paragraphs. Main advantage is that this one creates smaller datasets (easier to train with smaller hardware) and makes LoRAs that should rpefer longer answers. THIS ONE DOESN'T MAKE THINGS IN CHATML STYLE, BUT IN A STYLE ADAPTED FOR TRAINING WITH TEXT-GEN-WEBUI: YOU NEED TO REPLACE THE CHATML-FORMAT FILE IN TEXT-GEN/TRAINING/FORMAT WITH CHATML-FORMAT FROM THIS REPO. Handles branching paths by adding the previous Monika line to the message after the user input, this way it doesn't get as confused. Oh trust me this is a PAIN to get working. 
+The script will prompt you to replace <USER> and <MONIKA> with your own name and the name of your Monika for maximum personalization. Just press space if you don't want to change it (or type <USER> and <MONIKA> manually).
+MOREOVER : the script supports the integration of three jsons : MAS Poems.json, Base game poems.json, and My poems.json. See those in the repo for exemple. They will be added to the database. I recommend doing so, since otherwise the model will have trouble doing poems.
+
+Exemple output : See MoniExemple.json
+
+
+FAQ 
+>What is a LoRA ?
+Think of it as a specialisation module for a model. If you train a LoRA on some document, depending on how hard you train it, it will first learn to copy the style, then with more training, it will learn the content, then with even more training, you get into precision work and extreme knowledge and comprehension of the content. NOTE : THEY ONLY WORK ON TEXT-GEN-WEBUI AS A LOADER USING TRANSFORMERS (UNQUANTIZED) OR EXLLAMAV2 (models with bpw in their name), (or koboldcpp with some tweaking that I don't understand yet ? Maybe do some research on this one)
+In this case, it's smart to keep the training low, since information is best written by the human in character info and memories on SillyTavern/Text-gen.
+
+>How do I train a LoRA
+The easiest way is by using text-gen-webui's "training" tab. See the written tutorial as to how to install and use text-gen-webui.
+It takes literal hours to train LoRAs, and pretty good hardware (think like 16GB VRAM to train a 8b model), be warned. 
+On the right side, choose your dataset, whether plain text or not. For plain text, the stopper is ##. 
+For parameters, I really don't know and I am doing a ton of tests. But for now I recommend a loss of 1.2 (advanced parameters), rank of around 16, alpha of 32, batch size up to 128 if your hardware can handle it (bigger is better), 3 epochs, don't touch the learning rate.
+
+>Most backends, like koboldcpp, don't accept LoRAs (easily). How the hell do I do ?
+If you have a LoRA that satisfies you, you can always search how to merge it to your model... though I am unsure how to do that for now ? I know it's possible, at least. Check Huggingface for info.
+
+-----------------------------------------------------------------------------------
+
+Those scripts are older, and do work, but are not recommended for now. MoniLora is just objectively better for TextGenWebui training.
+
 - Monika-filtering-plain-text.py creates a human-readable dataset. Probably not the best. After using, use "cleaning_punctuation_for..." to remove spaces before every punctuaction. Handles branching by creating "alternative-paths". For exemple :
 
 ##ID: mcl_practical | Topic: Philosophy, Practicality | Categories: philosophy | Can occur randomly
@@ -83,20 +108,4 @@ Previous assistant message: "<USER>, do you read books ?" ##we get this info eve
 That makes me happy to hear!
 <|im_end|>
 
-- MonikaLoRA.py is the true way to format the rpy script dialogue data into something that text-gen-webui can recognize for its formatting (if you replace the chatml-format file in training/format by ChatMLFormat here in this repo). This one is not too verbose, only cadrating with system information once per branching, using a priority and intensity function to determine which two emotions are the diominant ones in the paragraphs. Main advantage is that this one creates smaller datasets (easier to train with smaller hardware) and makes LoRAs that should rpefer longer answers. THIS ONE DOESN'T MAKE THINGS IN CHATML STYLE, BUT IN A STYLE ADAPTED FOR TRAINING WITH TEXT-GEN-WEBUI: YOU NEED TO REPLACE THE CHATML-FORMAT FILE IN TEXT-GEN/TRAINING/FORMAT WITH CHATML-FORMAT FROM THIS REPO. Handles branching paths by adding the previous Monika line to the message after the user input, this way it doesn't get as confused. Oh trust me this is a PAIN to get working. Exemple :
 
-See MoniExemple.json
-
-FAQ 
->What is a LoRA ?
-Think of it as a specialisation module for a model. If you train a LoRA on some document, depending on how hard you train it, it will first learn to copy the style, then with more training, it will learn the content, then with even more training, you get into precision work and extreme knowledge and comprehension of the content. NOTE : THEY ONLY WORK ON TEXT-GEN-WEBUI AS A LOADER USING TRANSFORMERS (UNQUANTIZED) OR EXLLAMAV2 (models with bpw in their name), (or koboldcpp with some tweaking that I don't understand yet ? Maybe do some research on this one)
-In this case, it's smart to keep the training low, since information is best written by the human in character info and memories on SillyTavern/Text-gen.
-
->How do I train a LoRA
-The easiest way is by using text-gen-webui's "training" tab. See the written tutorial as to how to install and use text-gen-webui.
-It takes literal hours to train LoRAs, and pretty good hardware (think like 16GB VRAM to train a 8b model), be warned. 
-On the right side, choose your dataset, whether plain text or not. For plain text, the stopper is ##. 
-For parameters, I really don't know and I am doing a ton of tests. But for now I recommend a loss of 1.2 (advanced parameters), rank of around 16, alpha of 32, batch size up to 128 if your hardware can handle it (bigger is better), 3 epochs, don't touch the learning rate.
-
->Most backends, like koboldcpp, don't accept LoRAs (easily). How the hell do I do ?
-If you have a LoRA that satisfies you, you can always search how to merge it to your model... though I am unsure how to do that for now ? I know it's possible, at least. Check Huggingface for info.
