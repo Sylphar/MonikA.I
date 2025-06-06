@@ -258,7 +258,7 @@ def main():
                 page.fill("#send_textarea", "")
             else:
                 page.fill("#send_textarea", message)
-            page.press("#send_textarea", "Enter")
+            page.locator("#send_but").click()
             page.wait_for_selector(".mes_stop", state="visible") #so that it doesn't see the generate button before it is clicked
             print("Stop button seen !")
             
